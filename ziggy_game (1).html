@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>Ziggy Runner</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    html, body {
+      margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden;
+      background: #87CEEB; font-family: Arial, sans-serif;
+    }
+    #stage { position: relative; width: 100%; height: 100%; }
+    canvas { display: block; width: 100%; height: 100%; }
+    .ui {
+      position: absolute; top: 10px; left: 10px; right: 10px;
+      display: flex; gap: 8px; justify-content: space-between;
+      color: #fff; z-index: 20;
+    }
+    .panel { background: rgba(0,0,0,.35); padding: 6px 10px; border-radius: 6px; }
+    #ziggySprite {
+      position: absolute; width: 120px; height: 120px;
+      pointer-events: none; z-index: 10;
+    }
+    .overlay {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      background: linear-gradient(#87CEEB, #fff);
+      z-index: 50; text-align: center;
+    }
+    .overlay h1 { font-size: 48px; margin: 10px; }
+    .overlay button {
+      font-size: 22px; padding: 12px 26px; border: none;
+      border-radius: 10px; background: #ffcc00; cursor: pointer;
+    }
+    .btn { cursor: pointer; }
+  </style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="game"></canvas>
+  <!-- ZIGGY FIXO – NÃO TROCAR PERSONAGEM -->
+  <img id="ziggySprite" src="https://i.imgur.com/3agFCFR.gif" alt="Ziggy" />
+
+  <div class="ui">
+    <div class="panel">Pontos: <span id="score">0</span></div>
+    <div class="panel">Nível: <span id="level">1</span></div>
+    <div class="panel">Missão: <span id="mission">Colete 5 gemas</span></div>
+    <div class="panel btn" id="muteBtn">🔊</div>
+  </div>
+
+  <div id="startScreen" class="overlay" style="background: rgba(0,0,0,0);">
+    <h1 style="color:#fff;text-shadow:2px 2px 4px #000">Ziggy Runner</h1>
+    <button id="startBtn">Iniciar ▶</button>
+  </div>
+
+  <div id="gameOverScreen" class="overlay" style="display:none">
+    <h1>Game Over</h1>
+    <p>Pontuação: <span id="finalScore">0</span></p>
+    <button id="restartBtn">Jogar Novamente</button>
+  </div>
+</div>
+
+<audio id="music" loop>
+  <source src="https://cdn.pixabay.com/audio/2022/03/15/audio_7c7b3d41c4.mp3" type="audio/mpeg">
+</audio>
+
+<script>
+// ================= SETUP =================
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const ziggySprite = document.getElementById('ziggySprite');
+const startScreen = document.getElementById('startScreen');
+const gameOverScreen = document.getElementById('gameOverScreen');
+const startBtn = document.getElementById('startBtn');
+const restartBtn = document.getElementById('restartBtn');
+const music = document.getElementById('music');
+const muteBtn = document.getElementById('muteBtn');
+
+const scoreEl = document.getElementById('score');
+const levelEl = document.getElementById('level');
+const missionEl = document.getElementById('mission');
+const finalScoreEl = document.getElementById('finalScore');
+
+let score = 0;
+let level = 1;
+let speed = 4; // FACIL
+let state = 'start';
+let muted = false;
+let GROUND_Y = 0;
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  GROUND_Y = canvas.height * 0.78; // areia
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ================= CENÁRIO =================
+const SCENES = [
+  { sky: '#87CEEB', ground: '#D6B36A' },
+  { sky: '#9ad0a0', ground: '#7cb342' },
+  { sky: '#ffd1dc', ground: '#f4a460' }
+];
+function currentScene() {
+  return SCENES[(level - 1) % SCENES.length];
+}
+
+// ================= ZIGGY =================
+const ziggy = { x: 120, y: 0, w: 120, h: 120, vy: 0, jumping: false };
+const gravity = 0.8;
+ziggy.y = GROUND_Y - ziggy.h;
+
+// ================= OBJETOS =================
+let obstacles = [];
+let lastObstacleX = 0; // controla distancia entre obstaculos
+let gems = [];
+let clouds = [];
+
+let missionTarget = 5;
+let missionProgress = 0;
+
+function spawnObstacle() {
+  const minDistance = 400; // distancia grande entre obstaculos (modo facil)
+  if (obstacles.length > 0) {
+    const last = obstacles[obstacles.length - 1];
+    if (canvas.width - last.x < minDistance) return;
+  }
+  obstacles.push({
+    x: canvas.width,
+    y: GROUND_Y - 30,
+    w: 18,
+    h: 30
+  });
+}
+
+function spawnGem() {
+  gems.push({ x: canvas.width, y: GROUND_Y - 110, r: 14 });
+}
+
+function spawnCloud() {
+  clouds.push({ x: canvas.width, y: Math.random() * 200 + 30, s: Math.random() * 0.5 + 0.3 });
+}
+
+function newMission() {
+  missionProgress = 0;
+  missionTarget = 5 + level;
+  missionEl.textContent = `Colete ${missionTarget} gemas`;
+}
+
+function jump() {
+  if (!ziggy.jumping && state === 'play') {
+    ziggy.vy = -17;
+    ziggy.jumping = true;
+  }
+}
+
+document.addEventListener('keydown', e => e.code === 'Space' && jump());
+document.addEventListener('touchstart', jump);
+
+startBtn.onclick = startGame;
+restartBtn.onclick = resetGame;
+
+muteBtn.onclick = () => {
+  muted = !muted;
+  music.muted = muted;
+  muteBtn.textContent = muted ? '🔇' : '🔊';
+};
+
+function startGame() {
+  state = 'play';
+  startScreen.style.display = 'none';
+  music.currentTime = 0;
+  music.play();
+  newMission();
+}
+
+function resetGame() {
+  score = 0; level = 1; speed = 4;
+  obstacles = []; gems = []; clouds = [];
+  ziggy.y = GROUND_Y - ziggy.h; ziggy.vy = 0;
+  gameOverScreen.style.display = 'none';
+  startGame();
+}
+
+function loop() {
+  update(); draw(); requestAnimationFrame(loop);
+}
+
+function update() {
+  if (state !== 'play') return;
+
+  ziggy.vy += gravity;
+  ziggy.y += ziggy.vy;
+
+  if (ziggy.y >= GROUND_Y - ziggy.h) {
+    ziggy.y = GROUND_Y - ziggy.h;
+    ziggy.vy = 0;
+    ziggy.jumping = false;
+  }
+
+  if (Math.random() < 0.008) spawnObstacle();
+  if (Math.random() < 0.03) spawnGem();
+  if (Math.random() < 0.01) spawnCloud();
+
+  obstacles.forEach(o => o.x -= speed);
+  gems.forEach(g => g.x -= speed);
+  clouds.forEach(c => c.x -= speed * c.s);
+
+  obstacles = obstacles.filter(o => o.x + o.w > 0);
+  gems = gems.filter(g => g.x + g.r > 0);
+  clouds = clouds.filter(c => c.x + 200 > 0);
+
+  obstacles.forEach(o => {
+    if (ziggy.x < o.x + o.w && ziggy.x + ziggy.w > o.x && ziggy.y < o.y + o.h && ziggy.y + ziggy.h > o.y) endGame();
+  });
+
+  gems.forEach((g, i) => {
+    if (ziggy.x < g.x + g.r && ziggy.x + ziggy.w > g.x - g.r && ziggy.y < g.y + g.r && ziggy.y + ziggy.h > g.y - g.r) {
+      gems.splice(i, 1);
+      score += 10;
+      missionProgress++;
+      if (missionProgress >= missionTarget) {
+        level++; speed += 0.5; newMission();
+      }
+    }
+  });
+
+  scoreEl.textContent = score;
+  levelEl.textContent = level;
+  ziggySprite.style.left = ziggy.x + 'px';
+  ziggySprite.style.top = ziggy.y + 'px';
+}
+
+function endGame() {
+  state = 'over';
+  music.pause();
+  finalScoreEl.textContent = score;
+  gameOverScreen.style.display = 'flex';
+}
+
+function draw() {
+  const scene = currentScene();
+  ctx.fillStyle = scene.sky;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = scene.ground;
+  ctx.fillRect(0, GROUND_Y, canvas.width, canvas.height - GROUND_Y);
+
+  ctx.fillStyle = '#795548';
+  obstacles.forEach(o => ctx.fillRect(o.x, o.y, o.w, o.h));
+
+  ctx.fillStyle = '#8e24aa';
+  gems.forEach(g => { ctx.beginPath(); ctx.arc(g.x, g.y, g.r, 0, Math.PI * 2); ctx.fill(); });
+}
+
+console.assert(state === 'start', 'Tela inicial OK');
+console.assert(speed === 4, 'Modo fácil OK');
+
+loop();
+</script>
+</body>
+</html>
